@@ -19,6 +19,7 @@ from transformers import OPTForCausalLM, GPT2Tokenizer
 from transformers import CLIPVisionModel, CLIPVisionConfig
 
 from fromage import utils
+from transformers import LlamaTokenizer
 
 
 class FrozenArgs:
@@ -53,6 +54,8 @@ class FromageModel(nn.Module):
 
     if 'facebook/opt' in opt_version:
       self.lm = OPTForCausalLM.from_pretrained(opt_version)
+    elif 'Mistral' in opt_version or "llama" in opt_version:
+      self.lm = AutoModelForCausalLM.from_pretrained(opt_version)
     else:
       raise NotImplementedError
 
@@ -99,7 +102,7 @@ class FromageModel(nn.Module):
     self.text_hidden_fcs = nn.ModuleList([])
     if self.args.shared_emb_dim is None:
       if len(self.args.text_emb_layers) == 1:
-        if (self.args.text_emb_layers[0] in [-1, self.lm.config.num_hidden_layers]) and ('bert' not in opt_version):
+        if (self.args.text_emb_layers[0] in [-1, self.lm.config.num_hidden_layers]) and ('bert' not in opt_version) and ('mistral' not in opt_version) and ('llama' not in opt_version)  :
           out_dim = self.lm.config.word_embed_proj_dim
         else:
           out_dim = self.lm.config.hidden_size
@@ -113,7 +116,7 @@ class FromageModel(nn.Module):
       out_dim = self.args.shared_emb_dim
 
       for layer_idx in self.args.text_emb_layers:
-        if (layer_idx == -1 or layer_idx == self.lm.config.num_hidden_layers) and ('bert' not in opt_version):
+        if (layer_idx == -1 or layer_idx == self.lm.config.num_hidden_layers) and ('bert' not in opt_version) and ('mistral' not in opt_version) and ('llama' not in opt_version):
           in_dim = self.lm.config.word_embed_proj_dim
 
           text_fc = [nn.Linear(in_dim, out_dim), nn.Dropout(self.args.text_embed_dropout_prob)]
@@ -658,7 +661,12 @@ def load_fromage(model_dir: str) -> Fromage:
       model_kwargs = json.load(f)
 
   # Initialize tokenizer.
+  #if 'Mistral' in model_kwargs['opt_version'] or 'llama' in model_kwargs['opt_version']:
+  #  tokenizer = AutoTokenizer.from_pretrained(model_kwargs['opt_version'])
+  #else:
   tokenizer = GPT2Tokenizer.from_pretrained(model_kwargs['opt_version'])
+    
+
   tokenizer.pad_token = tokenizer.eos_token
   # Add special tokens to the model to enable [RET].
   tokenizer.add_special_tokens({"cls_token": "<|image|>"})

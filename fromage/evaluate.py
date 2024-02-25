@@ -10,6 +10,7 @@ import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics import BLEUScore
 import torchvision
+import wandb
 
 from fromage import losses as losses_utils
 from fromage import utils
@@ -285,23 +286,22 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
 
   progress.display_summary()
 
-  writer.add_scalar('val/total_secs_per_batch', batch_time.avg, actual_step)
-  writer.add_scalar('val/seq_top1_acc', top1.avg, actual_step)
-  writer.add_scalar('val/seq_top5_acc', top5.avg, actual_step)
-  writer.add_scalar('val/ce_loss', losses.avg, actual_step)
-  writer.add_scalar('val/bleu1', bleu1.avg, actual_step)
-  writer.add_scalar('val/bleu2', bleu2.avg, actual_step)
-  writer.add_scalar('val/bleu3', bleu3.avg, actual_step)
-  writer.add_scalar('val/bleu4', bleu4.avg, actual_step)
-  writer.add_scalar('val/contrastive_loss', losses.avg, actual_step)
-  writer.add_scalar('val/t2i_top1_acc', top1_caption.avg, actual_step)
-  writer.add_scalar('val/t2i_top5_acc', top5_caption.avg, actual_step)
-  writer.add_scalar('val/i2t_top1_acc', top1_image.avg, actual_step)
-  writer.add_scalar('val/i2t_top5_acc', top5_image.avg, actual_step)
-  writer.add_scalar('val/top1_acc', (top1_caption.avg + top1_image.avg) / 2.0, actual_step)
-  writer.add_scalar('val/top5_acc', (top5_caption.avg + top5_image.avg) / 2.0, actual_step)
-
-  writer.close()
+  wandb.log({'val/total_secs_per_batch': batch_time.avg,
+           'val/seq_top1_acc': top1.avg,
+           'val/seq_top5_acc': top5.avg,
+           'val/ce_loss': losses.avg,
+           'val/bleu1': bleu1.avg,
+           'val/bleu2': bleu2.avg,
+           'val/bleu3': bleu3.avg,
+           'val/bleu4': bleu4.avg,
+           'val/contrastive_loss': losses.avg,
+           'val/t2i_top1_acc': top1_caption.avg,
+           'val/t2i_top5_acc': top5_caption.avg,
+           'val/i2t_top1_acc': top1_image.avg,
+           'val/i2t_top5_acc': top5_image.avg,
+           'val/top1_acc': (top1_caption.avg + top1_image.avg) / 2.0,
+           'val/top5_acc': (top5_caption.avg + top5_image.avg) / 2.0},
+           step=actual_step)
 
   # Use top1 accuracy as the metric for keeping the best checkpoint.
   return top1_caption.avg

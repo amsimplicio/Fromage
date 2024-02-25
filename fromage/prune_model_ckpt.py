@@ -6,9 +6,11 @@ import torch
 import json
 from collections import OrderedDict
 
-ckpt_path = 'ckpt.pth.tar'
-pruned_output_path = 'ckpt_pruned.pth.tar'
-model_args_path = 'model_args.json'
+folder = "/user/home/a.simplicio/Fromage/runs/Mistral/"
+
+ckpt_path          = folder + 'ckpt.pth.tar'
+pruned_output_path = folder + 'pretrained_ckpt.pth.tar'
+model_args_path    = folder + 'model_args.json'
 
 if __name__ == '__main__':
     with open(model_args_path, 'r') as f:

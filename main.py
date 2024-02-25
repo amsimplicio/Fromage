@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import warnings
+import wandb
 
 import numpy as np
 from PIL import Image
@@ -24,7 +25,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-from torch.utils.tensorboard import SummaryWriter
+#from torch.utils.tensorboard import SummaryWriter
 import torchvision
 
 from fromage import data
@@ -33,6 +34,14 @@ from fromage import models
 from fromage import utils
 from fromage import evaluate
 from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import MistralForCausalLM, LlamaTokenizer
+from huggingface_hub import login
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("WANDB_API_KEY")
+
+
 
 # Disable HuggingFace tokenizer parallelism.
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -40,7 +49,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Available LLM models.
 llm_models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b',
               'facebook/opt-2.7b', 'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b',
-              'facebook/opt-66b']
+              'facebook/opt-66b', 'mistralai/Mistral-7B-v0.1', 'mistralai/Mistral-7B-Instruct-v0.1', 'meta-llama/Llama-2-7b-hf']
 datasets = ['cc3m']
 best_score = 0  # Variable to keep track of best model so far.
 
@@ -149,10 +158,13 @@ def parse_args(args):
                'N processes per node, which has N GPUs. This is the '
                'fastest way to use PyTorch for either single node or '
                'multi node data parallel training')
+  parser.add_argument('--project', default="Test Runs", type = str)
+  parser.add_argument('--run-name', type=str)
   return parser.parse_args(args)
 
 
 def main(args):
+  login(key=api_key)
   args = parse_args(args)
   i = 1
   args.log_dir = os.path.join(args.log_base_dir, args.exp_name)
@@ -198,10 +210,29 @@ def main(args):
   else:
     # Simply call main_worker function
     main_worker(args.gpu, ngpus_per_node, args)
+  wandb.finish()
 
 
 def main_worker(gpu, ngpus_per_node, args):
   """Setup code."""
+  wandb.init(
+  project= args.project,
+  name= args.run_name,
+  config= {
+    'learning rate'         : args.lr,
+    'lr warmup steps'       : args.lr_warmup_steps,
+    'lr schedule step size' : args.lr_schedule_step_size,
+    'lr schedule gamma'     : args.lr_schedule_gamma,
+    'num_workers'           : args.workers,
+    'epochs'                : args.epochs,
+    'steps_per_epoch'       : args.steps_per_epoch,
+    'batch_size'            : args.batch_size,
+    'val_batch_size'        : args.val_batch_size,
+    'beta1'                 : args.beta1,
+    'beta2'                 : args.beta2,
+    'weight decay'          : args.weight_decay
+    }
+ )
   global best_score
   args.gpu = gpu
 
@@ -233,13 +264,16 @@ def main_worker(gpu, ngpus_per_node, args):
   model_args.text_emb_layers = args.text_emb_layers
 
   tokenizer = AutoTokenizer.from_pretrained(args.opt_version, use_fast=False)
+  tokenizer.pad_token = tokenizer.eos_token
   # Add an image token for loss masking (and visualization) purposes.
   tokenizer.add_special_tokens({"cls_token": "<|image|>"})  # add special image token to tokenizer
   print('Adding [RET] token to vocabulary.')
   print('Before adding new token, tokenizer("[RET]") =', tokenizer('[RET]', add_special_tokens=False))
   num_added_tokens = tokenizer.add_tokens('[RET]')
+  #num_added_tokens = tokenizer.add_tokens('[RET]', special_tokens= True)
   print(f'After adding {num_added_tokens} new tokens, tokenizer("[RET]") =', tokenizer('[RET]', add_special_tokens=False))
   ret_token_idx = tokenizer('[RET]', add_special_tokens=False).input_ids
+  #print(ret_token_idx)
   assert len(ret_token_idx) == 1, ret_token_idx
   model_args.retrieval_token_idx = ret_token_idx[0]
   args.retrieval_token_idx = ret_token_idx[0]
@@ -253,6 +287,7 @@ def main_worker(gpu, ngpus_per_node, args):
     model = model.half()
   elif args.precision == 'bf16':
     model = model.bfloat16()
+  
 
   # Print parameters and count of model.
   param_counts_text = utils.get_params_count_str(model)
@@ -261,11 +296,10 @@ def main_worker(gpu, ngpus_per_node, args):
 
   # Log trainable parameters to Tensorboard.
   _, total_trainable_params, total_nontrainable_params = utils.get_params_count(model)
-  writer = SummaryWriter(args.log_dir)
-  writer.add_scalar('params/total', total_trainable_params + total_nontrainable_params, 0)
-  writer.add_scalar('params/total_trainable', total_trainable_params, 0)
-  writer.add_scalar('params/total_non_trainable', total_nontrainable_params, 0)
-  writer.close()
+  #wandb.log({'params/total': total_trainable_params + total_nontrainable_params,
+  #         'params/total_trainable': total_trainable_params,
+  #         'params/total_non_trainable': total_nontrainable_params})
+  
 
   if not torch.cuda.is_available():
     print('WARNING: using CPU, this will be slow!')
@@ -294,7 +328,7 @@ def main_worker(gpu, ngpus_per_node, args):
     model = model.cuda(args.gpu)
   else:
     model = torch.nn.DataParallel(model).cuda()
-
+  wandb.watch(model.module, log_freq=1)
   # define loss function (criterion), optimizer, and learning rate scheduler
   criterion = nn.CrossEntropyLoss().cuda(args.gpu)
   optimizer_cls = torch.optim.AdamW
@@ -312,8 +346,8 @@ def main_worker(gpu, ngpus_per_node, args):
   if args.resume:
     if os.path.isfile(args.resume):
       print("=> loading checkpoint '{}'".format(args.resume))
-      if args.gpu is None:
-        checkpoint = torch.load(args.resume)
+      if True: #args.gpu is None:
+        checkpoint = torch.load(args.resume, map_location = 'cpu')
       else:
         # Map model to be loaded to specified single gpu.
         loc = 'cuda:{}'.format(args.gpu)
@@ -325,6 +359,7 @@ def main_worker(gpu, ngpus_per_node, args):
       scheduler.load_state_dict(checkpoint['scheduler'])
       print("=> loaded checkpoint '{}' (epoch {})"
           .format(args.resume, checkpoint['epoch']))
+      del checkpoint #para não ocupar a memória
     else:
       print("=> no checkpoint found at '{}'".format(args.resume))
 
@@ -364,7 +399,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # evaluate on validation set
     eval_score = evaluate.validate(val_loader, model, tokenizer, criterion, epoch, args)
-
+    wandb.log({'eval_score':eval_score}, step = (epoch+1) * args.steps_per_epoch)
     # remember best score and save checkpoint
     is_best = eval_score > best_score
     best_score = max(eval_score, best_score)
@@ -397,12 +432,11 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
   top1_image = utils.AverageMeter('AccImage@1', ':6.2f')
   top5_image = utils.AverageMeter('AccImage@5', ':6.2f')
 
-  writer = SummaryWriter(args.log_dir)
-
-  progress = utils.ProgressMeter(
-    args.steps_per_epoch,
-    [batch_time, losses, ce_losses, cont_losses, top1, top5],
-    prefix="Epoch: [{}]".format(epoch))
+  #wandb.init(dir=args.log_dir)
+  #progress = utils.ProgressMeter(
+  #  args.steps_per_epoch,
+  #  [batch_time, losses, ce_losses, cont_losses, top1, top5],
+  #  prefix="Epoch: [{}]".format(epoch))
 
   # switch to train mode
   model.train()
@@ -410,6 +444,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
   end = time.time()
 
   for i, (image_paths, images, caption_images, tgt_tokens, token_len) in enumerate(train_loader):
+    print("caption_images", caption_images)
+    
     actual_step = epoch * args.steps_per_epoch + i + 1
     # measure data loading time
     data_time.update(time.time() - end)
@@ -437,6 +473,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
       (model_output, full_labels, last_embedding, _, visual_embs) = model(
         images, tgt_tokens, token_len, mode=model_mode, concat_captions=concat_captions, inference=False)
       output = model_output.logits
+  
+
 
       # Measure captioning accuracy for multi-task models and next-token prediction for retrieval models.
       if model_mode == 'captioning':
@@ -503,10 +541,12 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
     if ((i + 1) % args.grad_accumulation_steps == 0) or (i == args.steps_per_epoch - 1):
       # Zero out gradients of the embedding matrix outside of [RET].
       for param in model.module.model.input_embeddings.parameters():
-        assert param.grad.shape[0] == len(tokenizer)
-        # Keep other embeddings frozen.
-        mask = torch.arange(param.grad.shape[0]) != args.retrieval_token_idx
-        param.grad[mask, :] = 0
+        print(param)
+        if param.grad:
+          assert param.grad.shape[0] == len(tokenizer)
+          # Keep other embeddings frozen.
+          mask = torch.arange(param.grad.shape[0]) != args.retrieval_token_idx
+          param.grad[mask, :] = 0
 
       # compute gradient and do SGD step
       if args.grad_clip > 0:
@@ -543,23 +583,24 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
         top5_image.all_reduce()
         cap_time.all_reduce()
 
-      progress.display(i + 1)
+      #progress.display(i + 1)
 
-      writer.add_scalar('train/loss', losses.avg, actual_step)
-      writer.add_scalar('train/ce_loss', ce_losses.avg, actual_step)
-      writer.add_scalar('train/seq_top1_acc', top1.avg, actual_step)
-      writer.add_scalar('train/seq_top5_acc', top5.avg, actual_step)
-      writer.add_scalar('train/contrastive_loss', cont_losses.avg, actual_step)
-      writer.add_scalar('train/t2i_top1_acc', top1_caption.avg, actual_step)
-      writer.add_scalar('train/t2i_top5_acc', top5_caption.avg, actual_step)
-      writer.add_scalar('train/i2t_top1_acc', top1_image.avg, actual_step)
-      writer.add_scalar('train/i2t_top5_acc', top5_image.avg, actual_step)
-      writer.add_scalar('metrics/total_secs_per_batch', batch_time.avg, actual_step)
-      writer.add_scalar('metrics/total_secs_captioning', cap_time.avg, actual_step)
-      writer.add_scalar('metrics/total_secs_retrieval', ret_time.avg, actual_step)
-      writer.add_scalar('metrics/data_secs_per_batch', data_time.avg, actual_step)
-      writer.add_scalar('metrics/examples_per_sec', ex_per_sec, actual_step)
-
+      wandb.log({'train/loss': losses.avg,
+           'train/ce_loss': ce_losses.avg,
+           'train/seq_top1_acc': top1.avg,
+           'train/seq_top5_acc': top5.avg,
+           'train/contrastive_loss': cont_losses.avg,
+           'train/t2i_top1_acc': top1_caption.avg,
+           'train/t2i_top5_acc': top5_caption.avg,
+           'train/i2t_top1_acc': top1_image.avg,
+           'train/i2t_top5_acc': top5_image.avg,
+           'metrics/total_secs_per_batch': batch_time.avg,
+           'metrics/total_secs_captioning': cap_time.avg,
+           'metrics/total_secs_retrieval': ret_time.avg,
+           'metrics/data_secs_per_batch': data_time.avg,
+           'metrics/examples_per_sec': ex_per_sec},
+           step=actual_step)
+      
       if not args.multiprocessing_distributed or (args.multiprocessing_distributed
         and args.rank % ngpus_per_node == 0):
         image_bs = images.shape[0]
@@ -587,7 +628,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 
           display_images = torch.cat([normalized_images.float().cpu(), caption_images, generated_cap_images], axis=2)[:max_images_to_show]
           grid = torchvision.utils.make_grid(display_images, nrow=int(max_images_to_show ** 0.5), padding=4)
-          writer.add_image('train/images_gen_cap', grid, actual_step)
+          wandb.log({'train/images_gen_cap': [wandb.Image(grid, caption='Generated Captions')]}, step=actual_step)
 
         # Retrieved images (from text).
         retrieved_image_idx = logits_per_text[:image_bs, :image_bs].argmax(-1)
@@ -596,7 +637,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
           axis=0)
         t2i_images = torch.cat([t2i_images.float().cpu(), caption_images], axis=2)[:max_images_to_show]
         t2i_grid = torchvision.utils.make_grid(t2i_images, nrow=int(max_images_to_show ** 0.5), padding=4)
-        writer.add_image('train/t2i_ret', t2i_grid, actual_step)
+        wandb.log({'train/t2i_ret': [wandb.Image(t2i_grid, caption='T2I Retrieval')]}, step=actual_step)
 
         # Retrieved text (from image).
         retrieved_text_idx = logits_per_image[:image_bs, :image_bs].argmax(-1)
@@ -605,7 +646,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
           axis=0)
         i2t_images = torch.cat([normalized_images.float().cpu(), retrieved_text], axis=2)[:max_images_to_show]
         i2t_grid = torchvision.utils.make_grid(i2t_images, nrow=int(max_images_to_show ** 0.5), padding=4)
-        writer.add_image('train/i2t_ret', i2t_grid, actual_step)
+        wandb.log({'train/i2t_ret': [wandb.Image(i2t_grid, caption='I2T Retrieval')]}, step=actual_step)
 
       batch_time.reset()
       cap_time.reset()
@@ -627,13 +668,12 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
     scheduler.step()
     curr_lr = scheduler.get_last_lr()
     if (actual_step == 1) or (i + 1) % args.print_freq == 0:
-      # Write current learning rate to Tensorboard.
-      writer = SummaryWriter(args.log_dir)
-      writer.add_scalar('train/lr', curr_lr[0], actual_step)
-      writer.close()
-
-  writer.close()
-
+      # Write current learning rate to wandb
+      wandb.log({'train/lr': curr_lr[0]}, step=actual_step)
+      #wandb.finish()
+  #wandb.finish()
 
 if __name__ == '__main__':
+  
   main(sys.argv[1:])
+  

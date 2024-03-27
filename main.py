@@ -34,12 +34,13 @@ from fromage import models
 from fromage import utils
 from fromage import evaluate
 from transformers import AutoTokenizer
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 from transformers import MistralForCausalLM, LlamaTokenizer
 from huggingface_hub import login
 from dotenv import load_dotenv
 load_dotenv()
-api_key = os.getenv("WANDB_API_KEY")
+wanbd_key = os.getenv("WANDB_API_KEY")
+hf_key = os.getenv("HF_API_KEY")
 
 
 
@@ -49,8 +50,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Available LLM models.
 llm_models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b',
               'facebook/opt-2.7b', 'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b',
-              'facebook/opt-66b', 'mistralai/Mistral-7B-v0.1', 'mistralai/Mistral-7B-Instruct-v0.1', 'meta-llama/Llama-2-7b-hf']
-datasets = ['cc3m']
+              'facebook/opt-66b', 'mistralai/Mistral-7B-v0.1', 'mistralai/Mistral-7B-Instruct-v0.1', 'meta-llama/Llama-2-7b-hf', "NOVA-vision-language/GlorIA-1.3B"]
+datasets =  ['cc3m']
 best_score = 0  # Variable to keep track of best model so far.
 
 
@@ -164,7 +165,7 @@ def parse_args(args):
 
 
 def main(args):
-  login(key=api_key)
+  login(hf_key)
   args = parse_args(args)
   i = 1
   args.log_dir = os.path.join(args.log_base_dir, args.exp_name)

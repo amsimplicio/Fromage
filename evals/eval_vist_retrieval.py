@@ -14,19 +14,27 @@ logging.set_verbosity_error()
 
 from PIL import Image
 import matplotlib.pyplot as plt
-
+import argparse
+import sys
+sys.path.append('/user/home/a.simplicio/Fromage')
 from fromage import models
 from fromage import utils
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--llm', default='OPT', type=str)
+args = parser.parse_args(sys.argv[1:])
+
+model_list = {'OPT':'/user/home/a.simplicio/Fromage/runs/OPT_5', 'mistral':'/user/home/a.simplicio/Fromage/runs/Mistral', 'llama':'/user/home/a.simplicio/fromage/runs/fromage_llama_bs180'} 
 # Load model used in the paper.
-model_dir = './fromage_model/'
+
+model_dir = model_list[args.llm]
 model = models.load_fromage(model_dir)
 
 # Download the Visual Storytelling SIS dataset from https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz
 # Extract the files (there should be three sets: train, val, and test).
 # We use the val set for reporting results.
-vist_val_json_path = 'sis/val.story-in-sequence.json'
+vist_val_json_path = 'val.story-in-sequence.json'
 with open(vist_val_json_path, 'r') as f:
     vist_data_raw = json.load(f)
     
@@ -53,7 +61,7 @@ print(len(used_image_ids))
 
 
 # Precompute image features for running retrieval.
-embs_fn = 'sis_img_features.npy'
+embs_fn = str(args.llm) + 'sis_img_features0.npy'
 id2url = {}
 
 for image_data in vist_data_raw['images']:

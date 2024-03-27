@@ -9,7 +9,7 @@
 #sbatch --time=2-10:00:00 # Time limit in the form days-hours:minutes:seconds
 # SBATCH --exclude=novasearchdl  # Exclude nodes with these names (comma-separated)
 # SBATCH --partition=students # Partition to submit to
-#SBATCH --gres=gpu:nvidia_a100-pcie-40gb:3  # Possible values: gpu:hubgpu:<count> or gpu:nvidia_a100-pcie-40gb:<count> or gpu:nvidia_a100-sxm4-40gb:<count>
+#SBATCH --gres=gpu:nvidia_a100-pcie-40gb:1  # Possible values: gpu:hubgpu:<count> or gpu:nvidia_a100-pcie-40gb:<count> or gpu:nvidia_a100-sxm4-40gb:<count>
 # Setup anaconda
 eval "$(conda shell.bash hook)"
 
@@ -17,10 +17,11 @@ eval "$(conda shell.bash hook)"
 conda activate mistral
 python -u main.py \
     --multiprocessing-distributed --world-size 1 --rank 0 \
-    --dataset=cc3m  --val-dataset=cc3m \
+    --dataset=cc3m_portuguese_1000  --val-dataset=cc3m_portuguese_1000\
     --opt-version='mistralai/Mistral-7B-Instruct-v0.1' --visual-model='openai/clip-vit-large-patch14' \
-    --exp_name='Mistral' --image-dir='/storagebk/datasets'  --log-base-dir='runs/' \
+    --exp_name='Gloria' --image-dir='/storagebk/datasets'  --log-base-dir='runs/' \
     --learning-rate=0.0003 --precision='bf16'  --print-freq=10 \
-    --batch-size=180  --val-batch-size=100 \
-    --workers=4 --project='Train_Mistral' --run-name='original_bs' #--resume='runs/fromage_exp_42/ckpt_best.pth.tar'
+    --batch-size=40  --val-batch-size=10 \
+    --epochs=5 --steps-per-epoch=25 \
+    --workers=4 --project='Train_Gloria' --run-name='teste_1000_1' #--resume='runs/fromage_exp_42/ckpt_best.pth.tar'
 

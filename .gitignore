@@ -12,3 +12,15 @@ datasets/cc3m_train.tsv
 datasets/cc3m_val.tsv
 fromage/prune_model_ckpt.py
 .env
+datasets/cc3m_train.tsv
+datasets/cc3m_val.tsv
+datasets/cc3m_train.tsv
+datasets/cc3m_val.tsv
+evals/llamasis_img_features.npy
+evals/mistralsis_img_features.npy
+evals/OPTsis_img_features.npy
+evals/OPTsis_img_features0.npy
+evals/eval_vist.sh
+train_fromage.sh
+evals/val.story-in-sequence.json
+train_fromage.sh

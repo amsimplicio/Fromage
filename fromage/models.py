@@ -16,10 +16,10 @@ from PIL import Image, UnidentifiedImageError
 
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers import OPTForCausalLM, GPT2Tokenizer
-from transformers import CLIPVisionModel, CLIPVisionConfig
+from transformers import CLIPVisionModel, CLIPVisionConfig, AutoTokenizer
 
 from fromage import utils
-from transformers import LlamaTokenizer
+#from transformers import LlamaTokenizer
 
 
 class FrozenArgs:
@@ -33,6 +33,7 @@ class FrozenArgs:
   shared_emb_dim: Optional[int] = 256
   text_emb_layers: List[int] = [-1]
   retrieval_token_idx: int = 0
+  cls_layer: int = -1
 
 
 class FromageModel(nn.Module):
@@ -54,10 +55,10 @@ class FromageModel(nn.Module):
 
     if 'facebook/opt' in opt_version:
       self.lm = OPTForCausalLM.from_pretrained(opt_version)
-    elif 'Mistral' in opt_version or "llama" in opt_version:
-      self.lm = AutoModelForCausalLM.from_pretrained(opt_version)
     else:
-      raise NotImplementedError
+      self.lm = AutoModelForCausalLM.from_pretrained(opt_version)
+    #else:
+    #  raise NotImplementedError
 
     self.opt_version = opt_version
 
@@ -75,8 +76,16 @@ class FromageModel(nn.Module):
     print(f'Initializing embedding for the retrieval token [RET] (id = {self.retrieval_token_idx}).')
     self.lm.resize_token_embeddings(len(tokenizer))
 
-    self.input_embeddings = self.lm.get_input_embeddings()
+    # in the new version of transformers, the resize_token_embeddings method does not set the embeddings to
+    # trainable, so we need to do it manually
+    #self.lm.get_input_embeddings().weight.requires_grad = True
+    # set lm_head weights to be trainable
+    #self.lm.get_output_embeddings().weight.requires_grad = True
 
+
+    self.input_embeddings = self.lm.get_input_embeddings()
+    self.output_embeddings = self.lm.get_output_embeddings()   
+     
     print("Restoring pretrained weights for the visual model.")
     if 'clip' in visual_encoder:
       self.visual_model = CLIPVisionModel.from_pretrained(visual_encoder)
@@ -102,7 +111,7 @@ class FromageModel(nn.Module):
     self.text_hidden_fcs = nn.ModuleList([])
     if self.args.shared_emb_dim is None:
       if len(self.args.text_emb_layers) == 1:
-        if (self.args.text_emb_layers[0] in [-1, self.lm.config.num_hidden_layers]) and ('bert' not in opt_version) and ('mistral' not in opt_version) and ('llama' not in opt_version)  :
+        if (self.args.text_emb_layers[0] in [-1, self.lm.config.num_hidden_layers]) and  ('opt'  in opt_version) :
           out_dim = self.lm.config.word_embed_proj_dim
         else:
           out_dim = self.lm.config.hidden_size
@@ -116,7 +125,7 @@ class FromageModel(nn.Module):
       out_dim = self.args.shared_emb_dim
 
       for layer_idx in self.args.text_emb_layers:
-        if (layer_idx == -1 or layer_idx == self.lm.config.num_hidden_layers) and ('bert' not in opt_version) and ('mistral' not in opt_version) and ('llama' not in opt_version):
+        if (layer_idx == -1 or layer_idx == self.lm.config.num_hidden_layers) and  ('opt'  in opt_version) :
           in_dim = self.lm.config.word_embed_proj_dim
 
           text_fc = [nn.Linear(in_dim, out_dim), nn.Dropout(self.args.text_embed_dropout_prob)]
@@ -140,8 +149,10 @@ class FromageModel(nn.Module):
 
     # Extract visual embeddings from the vision encoder.
     if 'clip' in self.visual_model_name:
-      outputs = self.visual_model(pixel_values)
-      encoder_outputs = outputs.pooler_output
+      outputs = self.visual_model(pixel_values, output_hidden_states=True)
+      encoder_outputs = outputs.hidden_states[self.args.cls_layer][:, 0]
+
+      #encoder_outputs = outputs.pooler_output
     else:
       raise NotImplementedError
 
@@ -528,7 +539,18 @@ class Fromage(nn.Module):
     elif num_words > 0:
       generated_ids, generated_embeddings, _ = self.model.generate(input_embs, num_words,
         temperature=temperature, top_p=top_p, ret_scale_factor=ret_scale_factor)
-      embeddings = generated_embeddings[-1][:, input_embs.shape[1]:]
+      #for emb in generated_embeddings:
+      #  print(emb.shape)
+      if 'opt' in self.model.opt_version: 
+        embeddings = generated_embeddings[-1][:, input_embs.shape[1]:]
+      else:
+        embeddings = torch.cat(generated_embeddings[1:], 1)
+
+      #print(generated_ids.shape)
+
+      
+
+      #print(embeddings.shape)
 
       # Truncate to newline.
       newline_token_id = self.model.tokenizer('\n', add_special_tokens=False).input_ids[0]
@@ -555,7 +577,9 @@ class Fromage(nn.Module):
       caption = self.model.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
       return_outputs.append(utils.truncate_caption(caption))
     else:
+      print(all_ret_idx)
       for ret_idx in all_ret_idx:
+        #print(embeddings.shape)
         ret_emb = embeddings[:, ret_idx, :]
         scores = self.emb_matrix @ ret_emb.T
 
@@ -652,6 +676,8 @@ def load_fromage(model_dir: str) -> Fromage:
         train_embs_data = pkl.load(wf)
         path_array.extend(train_embs_data['paths'])
         emb_matrix.append(train_embs_data['embeddings'])
+  #print(emb_matrix)
+  emb_matrix = [[torch.Tensor.numpy(torch.tensor(emb).float()) for emb in emb_matrix[0]]]
   emb_matrix = np.concatenate(emb_matrix, axis=0)
 
   # Number of paths should be equal to number of embeddings.
@@ -662,9 +688,9 @@ def load_fromage(model_dir: str) -> Fromage:
 
   # Initialize tokenizer.
   #if 'Mistral' in model_kwargs['opt_version'] or 'llama' in model_kwargs['opt_version']:
-  #  tokenizer = AutoTokenizer.from_pretrained(model_kwargs['opt_version'])
+  tokenizer = AutoTokenizer.from_pretrained(model_kwargs['opt_version'])
   #else:
-  tokenizer = GPT2Tokenizer.from_pretrained(model_kwargs['opt_version'])
+  #tokenizer = GPT2Tokenizer.from_pretrained(model_kwargs['opt_version'])
     
 
   tokenizer.pad_token = tokenizer.eos_token

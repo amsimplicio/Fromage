@@ -35,6 +35,12 @@ def get_dataset(args, split: str, tokenizer, precision: str = 'fp32') -> Dataset
     if 'cc3m' in args.dataset:
       dataset_paths.append(os.path.join(args.dataset_dir, 'cc3m_train.tsv'))
       image_data_dirs.append(os.path.join(args.image_dir, 'cc3m/training/'))
+    elif 'cc3m_madlad' in args.dataset:
+      dataset_paths.append(os.path.join(args.dataset_dir, 'cc3m_portuguese_train.tsv'))
+      image_data_dirs.append(os.path.join(args.image_dir, 'cc3m/training/'))
+    elif 'cc3m_deepl' in args.dataset:
+      dataset_paths.append(os.path.join(args.dataset_dir, 'cc3m_deepl_train.tsv'))
+      image_data_dirs.append(os.path.join(args.image_dir, 'cc3m/training/'))              
     else:
       raise NotImplementedError
 
@@ -42,6 +48,12 @@ def get_dataset(args, split: str, tokenizer, precision: str = 'fp32') -> Dataset
     if 'cc3m' in args.val_dataset:
       dataset_paths.append(os.path.join(args.dataset_dir, 'cc3m_val.tsv'))
       image_data_dirs.append(os.path.join(args.image_dir, 'cc3m/validation'))
+    elif 'cc3m_madlad' in args.dataset:
+      dataset_paths.append(os.path.join(args.dataset_dir, 'cc3m_portuguese_val.tsv'))
+      image_data_dirs.append(os.path.join(args.image_dir, 'cc3m/validation'))     
+    elif 'cc3m_deepl' in args.dataset:
+      dataset_paths.append(os.path.join(args.dataset_dir, 'cc3m_deepl_val.tsv'))
+      image_data_dirs.append(os.path.join(args.image_dir, 'cc3m/validation'))   
     else:
       raise NotImplementedError
 

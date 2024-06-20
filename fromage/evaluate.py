@@ -11,6 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchmetrics import BLEUScore
 import torchvision
 import wandb
+import evaluate  
 
 from fromage import losses as losses_utils
 from fromage import utils
@@ -20,6 +21,7 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
   ngpus_per_node = torch.cuda.device_count()
   writer = SummaryWriter(args.log_dir)
   bleu_scorers = [BLEUScore(n_gram=i) for i in [1, 2, 3, 4]]
+  meteor = evaluate.load('meteor')
   actual_step = (epoch + 1) * args.steps_per_epoch
   model_modes = ['captioning', 'retrieval']
   num_words = 32  # Number of tokens to generate.
@@ -218,6 +220,8 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
       bleu3.update(bleu3_score, 2)
       bleu4_score = bleu_scorers[3](all_generated_captions, full_gt_captions)
       bleu4.update(bleu4_score, 3)
+      meteor_score = meteor.compute(predictions = all_generated_captions, references = full_gt_captions)
+      met.update(meteor_score['meteor'])
 
       # Measure retrieval metrics over the entire validation set.
       all_image_features = torch.cat(all_image_features, axis=0)  # (coco_val_len, 2048)
@@ -248,6 +252,7 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
   bleu2 = utils.AverageMeter('BLEU@2', ':6.2f', utils.Summary.AVERAGE)
   bleu3 = utils.AverageMeter('BLEU@3', ':6.2f', utils.Summary.AVERAGE)
   bleu4 = utils.AverageMeter('BLEU@4', ':6.2f', utils.Summary.AVERAGE)
+  met   = utils.AverageMeter('METEOR', ':6.2f', utils.Summary.AVERAGE)
   top1_caption = utils.AverageMeter('CaptionAcc@1', ':6.2f', utils.Summary.AVERAGE)
   top5_caption = utils.AverageMeter('CaptionAcc@5', ':6.2f', utils.Summary.AVERAGE)
   top1_image = utils.AverageMeter('ImageAcc@1', ':6.2f', utils.Summary.AVERAGE)
@@ -269,6 +274,7 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
     bleu2.all_reduce()
     bleu3.all_reduce()
     bleu4.all_reduce()
+    met.all_reduce()
     top1.all_reduce()
     top5.all_reduce()
     top1_caption.all_reduce()
@@ -294,6 +300,7 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
            'val/bleu2': bleu2.avg,
            'val/bleu3': bleu3.avg,
            'val/bleu4': bleu4.avg,
+           'val/meteor': met.avg,
            'val/contrastive_loss': losses.avg,
            'val/t2i_top1_acc': top1_caption.avg,
            'val/t2i_top5_acc': top5_caption.avg,

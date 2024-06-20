@@ -17,12 +17,13 @@ import json
 import os
 import torch
 from transformers import logging
-from tqdm import notebook
+from tqdm import tqdm
 logging.set_verbosity_error()
 
 from PIL import Image
 import matplotlib.pyplot as plt
-
+import sys
+sys.path.append('/user/home/a.simplicio/Requeijao')
 from fromage import models
 from fromage import utils
 
@@ -41,7 +42,12 @@ def get_pixel_values_from_path(path: str, feature_extractor):
 
 if __name__ == "__main__":
     # Load model used in the paper.
-    model_dir = './' #'./fromage_model/'
+    #model_dir = '/user/home/a.simplicio/Fromage/runs/GPTNeo' #'./fromage_model/'
+    #model_dir = '/user/home/a.simplicio/Requeijao/runs/gloria_deepL_resume' #'./fromage_model/'
+    #model_dir = '/user/home/a.simplicio/Requeijao/runs/Gervasio_8'
+    #model_dir = '/user/home/a.simplicio/Requeijao/runs/Gervasio_1'
+    model_dir = '/user/home/a.simplicio/Fromage/runs/Gloria'
+
     model = models.load_fromage(model_dir)
 
 
@@ -50,21 +56,18 @@ if __name__ == "__main__":
     # (for computing MRR) and the images (https://www.dropbox.com/s/twmtutniktom7tu/VisualDialog_val2018.zip?dl=0).
     # Extract everything to the `VisualDialog` folder.
 
-    base_dir = '/projects/tir6/general/jingyuk/VisualDialog'
+    #base_dir = '/projects/tir6/general/jingyuk/VisualDialog'
     split = 'val'
-    img_dir = os.path.join(base_dir, f'VisualDialog_{split}2018')
+    img_dir = '/user/home/a.simplicio/Requeijao/evals/VisualDialog_val2018'
 
-    with open(os.path.join(base_dir, f'visdial_1.0_{split}.json'), 'r') as f:
+    #with open('/user/home/a.simplicio/Requeijao/evals/visdial_1.0_val.json', 'r') as f:
+    #    visdial_data = json.load(f)
+    #with open('/user/home/a.simplicio/Requeijao/evals/visdial_val_deepl.json', 'r') as f:
+    #    visdial_data = json.load(f)
+    with open('/user/home/a.simplicio/Requeijao/evals/visdial_val_portuguese.json', 'r') as f:
         visdial_data = json.load(f)
         
-    with open(os.path.join(base_dir, f'visdial_1.0_{split}_dense_annotations.json'), 'r') as f:
-        dense_data = json.load(f)
 
-    # Check that dense and sparse data are aligned.
-    assert len(dense_data) == len(visdial_data['data']['dialogs'])
-    for i in range(len(dense_data)):
-        assert dense_data[i]['image_id'] == visdial_data['data']['dialogs'][i]['image_id']
-        
     questions = visdial_data['data']['questions']
     answers = visdial_data['data']['answers']
     dialogs = visdial_data['data']['dialogs']
@@ -76,7 +79,7 @@ if __name__ == "__main__":
     all_visual_embs = []
     all_text_embs = []
 
-    for example_idx in notebook.tqdm(range(len(dialogs))):
+    for example_idx in tqdm(range(len(dialogs))):
         dialog = dialogs[example_idx]
         image_id = str(dialog['image_id']).rjust(12, '0')
         contexts = []

@@ -18,12 +18,13 @@ import json
 import os
 import torch
 from transformers import logging
-from tqdm import notebook
+from tqdm import tqdm
 logging.set_verbosity_error()
 
 from PIL import Image
 import matplotlib.pyplot as plt
-
+import sys
+sys.path.append('/user/home/a.simplicio/Requeijao')
 from fromage import models
 from fromage import utils
 
@@ -32,7 +33,7 @@ from fromage import utils
 topk = (1, 5, 10)
 # Number of options in a batch to compute loss for.
 # If using a GPU with lower VRAM, this may have to be lowered.
-batch_size = 20
+batch_size = 5
 
 # Download the VisDial validation annotations (https://www.dropbox.com/s/ibs3a0zhw74zisc/visdial_1.0_val.zip?dl=0),
 # the dense answer annotations (https://www.dropbox.com/s/3knyk09ko4xekmc/visdial_1.0_val_dense_annotations.json?dl=0)
@@ -40,11 +41,11 @@ batch_size = 20
 # Extract everything to the `VisualDialog` folder.
 # First, we'll load the annotations, and define the paths to our images
 # and annotations:
-base_dir = 'VisualDialog/'
+#base_dir = 'VisualDialog/'
 split = 'val'
 
 # Path to save intermediate results to, to allow resuming in case of interruptions.
-save_path = 'visdial_results_full.npy'
+save_path = 'visdial_results_gervasio_madlad.npy'
 
 
 
@@ -163,23 +164,29 @@ def scores_to_ranks(scores: torch.Tensor):
 
 if __name__ == "__main__":
     # Load model used in the paper.
-    model_dir = './fromage_model/'
+    #model_dir = '/user/home/a.simplicio/Fromage/runs/Gloria'
+    #model_dir = '/user/home/a.simplicio/Requeijao/runs/gloria_deepL_resume'
+    #model_dir = '/user/home/a.simplicio/Requeijao/runs/Gervasio_8'
+    model_dir = '//user/home/a.simplicio/Fromage/runs/Gloria'
+
     model = models.load_fromage(model_dir)
 
     # Load VisDial data.
-    img_dir = os.path.join(base_dir, f'VisualDialog_{split}2018')
+    img_dir = '/user/home/a.simplicio/Requeijao/evals/VisualDialog_val2018'
+    #ann_file = '/user/home/a.simplicio/Fromage/evals/visdial_val_portuguese.json'
+    ann_file = '/user/home/a.simplicio/Requeijao/evals/visdial_val_deepl.json'
 
-    with open(os.path.join(base_dir, f'visdial_1.0_{split}.json'), 'r') as f:
+    with open(ann_file, 'r') as f:
         visdial_data = json.load(f)
         
-    with open(os.path.join(base_dir, f'visdial_1.0_{split}_dense_annotations.json'), 'r') as f:
+    with open('/user/home/a.simplicio/Fromage/evals/visdial_1.0_val_dense_annotations.json', 'r') as f:
         dense_data = json.load(f)
 
     # Check that dense and sparse data are aligned.
     assert len(dense_data) == len(visdial_data['data']['dialogs'])
     for i in range(len(dense_data)):
         assert dense_data[i]['image_id'] == visdial_data['data']['dialogs'][i]['image_id']
-        
+
     questions = visdial_data['data']['questions']
     answers = visdial_data['data']['answers']
     dialogs = visdial_data['data']['dialogs']
@@ -202,7 +209,7 @@ if __name__ == "__main__":
         all_gt_results = []
         all_losses = []
 
-    for example_idx in notebook.tqdm(range(len(all_preds) // 10, len(dialogs))):
+    for example_idx in tqdm(range(len(all_preds) // 10, len(dialogs))):
         dialog = dialogs[example_idx]
         image_id = str(dialog['image_id']).rjust(12, '0')
         contexts = []
@@ -239,6 +246,7 @@ if __name__ == "__main__":
 
                 for _, ans in enumerate(answer_options):
                     ans_ids = model.model.tokenizer(ans, add_special_tokens=True, return_tensors="pt").input_ids
+                    #print(ans_ids)
                     ans_ids = ans_ids.to(images.device)
                     ans_embs = model.model.input_embeddings(ans_ids)
                     input_embs = torch.cat([
@@ -271,6 +279,7 @@ if __name__ == "__main__":
                         labels=None,
                         use_cache=False,
                         output_hidden_states=True)
+                    out
                     all_logits.append(out.logits)
 
                 logits = torch.cat(all_logits, dim=0)
@@ -286,7 +295,6 @@ if __name__ == "__main__":
 
         with open(save_path, 'wb') as wf:
             np.save(wf, {'all_preds': all_preds, 'all_gt_results': all_gt_results, 'all_losses': all_losses})
-
     # Finally, we can compute NDCG, MRR, and Recall@k:
     with open(save_path, 'rb') as rf:
         all_data = np.load(rf, allow_pickle=True).item()

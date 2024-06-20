@@ -35,11 +35,12 @@ from fromage import utils
 from fromage import evaluate
 from transformers import AutoTokenizer
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers import MistralForCausalLM, LlamaTokenizer
+#from transformers import MistralForCausalLM, LlamaTokenizer
 from huggingface_hub import login
 from dotenv import load_dotenv
 load_dotenv()
-api_key = os.getenv("WANDB_API_KEY")
+wanbd_key = os.getenv("WANDB_API_KEY")
+hf_key = os.getenv("HF_API_KEY")
 
 
 
@@ -49,7 +50,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Available LLM models.
 llm_models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b',
               'facebook/opt-2.7b', 'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b',
-              'facebook/opt-66b', 'mistralai/Mistral-7B-v0.1', 'mistralai/Mistral-7B-Instruct-v0.1', 'meta-llama/Llama-2-7b-hf']
+              'facebook/opt-66b', 'mistralai/Mistral-7B-v0.1', 'mistralai/Mistral-7B-Instruct-v0.1', 'meta-llama/Llama-2-7b-hf', 
+              'PORTULAN/gervasio-7b-portuguese-ptpt-decoder', 'NOVA-vision-language/GlorIA-1.3B', 'google/gemma-2b-it']
 datasets = ['cc3m']
 best_score = 0  # Variable to keep track of best model so far.
 
@@ -130,7 +132,8 @@ def parse_args(args):
             metavar='N', help='Maximum length to truncate captions / generations to.')
   parser.add_argument('--n-visual-tokens', default=1, type=int,
             metavar='N', help='Number of visual tokens to use for the Frozen model.')
-
+  parser.add_argument('--cls-layer', default=-1, type=int,
+            metavar='N', help='CLIP Layer from which the tokens will be extracted')
   parser.add_argument('--beta1', default=0.9, type=float, metavar='M', help='beta1 for Adam')
   parser.add_argument('--beta2', default=0.95, type=float, metavar='M', help='beta2 for Adam')
   parser.add_argument('--wd', '--weight-decay', default=0.0, type=float,
@@ -164,7 +167,7 @@ def parse_args(args):
 
 
 def main(args):
-  login(key=api_key)
+  login(hf_key)
   args = parse_args(args)
   i = 1
   args.log_dir = os.path.join(args.log_base_dir, args.exp_name)
@@ -207,6 +210,7 @@ def main(args):
     # Use torch.multiprocessing.spawn to launch distributed processes: the
     # main_worker process function
     mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+    
   else:
     # Simply call main_worker function
     main_worker(args.gpu, ngpus_per_node, args)
@@ -262,6 +266,7 @@ def main_worker(gpu, ngpus_per_node, args):
   model_args.text_embed_dropout_prob = args.text_embed_dropout_prob
   model_args.shared_emb_dim = args.shared_emb_dim
   model_args.text_emb_layers = args.text_emb_layers
+  model_args.cls_layer = args.cls_layer
 
   tokenizer = AutoTokenizer.from_pretrained(args.opt_version, use_fast=False)
   tokenizer.pad_token = tokenizer.eos_token
@@ -274,7 +279,7 @@ def main_worker(gpu, ngpus_per_node, args):
   print(f'After adding {num_added_tokens} new tokens, tokenizer("[RET]") =', tokenizer('[RET]', add_special_tokens=False))
   ret_token_idx = tokenizer('[RET]', add_special_tokens=False).input_ids
   #print(ret_token_idx)
-  assert len(ret_token_idx) == 1, ret_token_idx
+  #assert len(ret_token_idx) == 1, ret_token_idx
   model_args.retrieval_token_idx = ret_token_idx[0]
   args.retrieval_token_idx = ret_token_idx[0]
 
@@ -317,11 +322,13 @@ def main_worker(gpu, ngpus_per_node, args):
       args.batch_size = int(args.batch_size / ngpus_per_node)
       args.val_batch_size = int((args.val_batch_size or args.batch_size) / ngpus_per_node)
       args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
+      #model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False, broadcast_buffers=False)
       model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
     else:
       model.cuda()
       # DistributedDataParallel will divide and allocate batch_size to all
       # available GPUs if device_ids are not set
+      #model = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=False, broadcast_buffers=False)
       model = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=False)
   elif args.gpu is not None:
     torch.cuda.set_device(args.gpu)
@@ -444,7 +451,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
   end = time.time()
 
   for i, (image_paths, images, caption_images, tgt_tokens, token_len) in enumerate(train_loader):
-    print("caption_images", caption_images)
+    #print("caption_images", caption_images)
     
     actual_step = epoch * args.steps_per_epoch + i + 1
     # measure data loading time
@@ -541,12 +548,18 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
     if ((i + 1) % args.grad_accumulation_steps == 0) or (i == args.steps_per_epoch - 1):
       # Zero out gradients of the embedding matrix outside of [RET].
       for param in model.module.model.input_embeddings.parameters():
-        print(param)
-        if param.grad:
+        if param.grad != None:
           assert param.grad.shape[0] == len(tokenizer)
           # Keep other embeddings frozen.
           mask = torch.arange(param.grad.shape[0]) != args.retrieval_token_idx
           param.grad[mask, :] = 0
+      for param in model.module.model.output_embeddings.parameters():
+        if param.grad  != None:
+          assert param.grad.shape[0] == len(tokenizer)
+          # Keep other embeddings frozen.
+          mask = torch.arange(param.grad.shape[0]) != args.retrieval_token_idx
+          param.grad[mask, :] = 0
+                    
 
       # compute gradient and do SGD step
       if args.grad_clip > 0:
@@ -559,6 +572,14 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
       frozen_norm = torch.norm(model.module.model.input_embeddings.weight[:-1, :], dim=1).mean(0)
       trainable_weight = model.module.model.input_embeddings.weight[-1, :]
       model.module.model.input_embeddings.weight[-1, :].div_(torch.norm(trainable_weight) / frozen_norm)
+
+      # Normalize trainable embeddings.
+      frozen_norm = torch.norm(model.module.model.output_embeddings.weight[:-1, :], dim=1).mean(0)
+      trainable_weight = model.module.model.output_embeddings.weight[-1, :]
+      model.module.model.output_embeddings.weight[-1, :].div_(torch.norm(trainable_weight) / frozen_norm)
+
+
+
 
     # measure elapsed time
     batch_time.update(time.time() - end)
@@ -613,7 +634,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
         generated_captions = tokenizer.batch_decode(pred_tokens, skip_special_tokens=False)
 
         # Log image (and generated caption) outputs to Tensorboard.
-        if model_mode == 'captioning':
+      """         if model_mode == 'captioning':
           # Create generated caption text.
           generated_cap_images = torch.stack([
             utils.create_image_of_text(
@@ -647,7 +668,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
         i2t_images = torch.cat([normalized_images.float().cpu(), retrieved_text], axis=2)[:max_images_to_show]
         i2t_grid = torchvision.utils.make_grid(i2t_images, nrow=int(max_images_to_show ** 0.5), padding=4)
         wandb.log({'train/i2t_ret': [wandb.Image(i2t_grid, caption='I2T Retrieval')]}, step=actual_step)
-
+      """
       batch_time.reset()
       cap_time.reset()
       ret_time.reset()
